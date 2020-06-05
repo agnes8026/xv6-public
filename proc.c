@@ -532,3 +532,60 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+
+
+int clone(void*(func)(void*), void *stack, int size, void *arg) {
+  int i, pid;
+  struct proc *np;
+  struct proc *currproc = myproc();
+
+  // allocate process.
+  if((np = allocproc()) == 0){
+    return -1;
+  }
+
+  if ((uint)stack % PGSIZE != 0 || stack == 0)
+    return -1;
+
+  // use the same address space with parent
+  np->state = UNUSED;
+  np->sz = currproc->sz;
+  np->parent = currproc;
+  *np->tf = *currproc->tf;
+  np->pgdir = currproc->pgdir;
+
+  np->tf->eip = (uint)func; 
+  np->tf->eax = 0;
+
+  // use the same file descriptor
+  for (i = 0; i < NOFILE; i++)
+    if (currproc->ofile[i])
+      np->ofile[i] = filedup(currproc->ofile[i]);
+  np->cwd = idup(currproc->cwd);
+
+  safestrcpy(np->name, currproc->name, sizeof(currproc->name));
+
+  acquire(&ptable.lock);
+  uint ustack[2];
+  ustack[0] = 0xffffffff; 
+  ustack[1] = (uint)arg;
+
+  np->tf->esp = (uint)(stack+PGSIZE - 4); 
+  *((uint*)(np->tf->esp)) = (uint)arg; 
+  *((uint*)(np->tf->esp) - 4) = 0xFFFFFFFF; 
+  np->tf->esp =(np->tf->esp) - 4;
+  if (copyout(np->pgdir, np->tf->esp, ustack, size) < 0) {
+    cprintf("Stack copy failed.\n");
+    return -1;
+  }
+
+  np->state = RUNNABLE;
+
+  np->tf->ebp = currproc->tf->esp;
+
+  pid = np->pid;
+  release(&ptable.lock);
+
+  return pid;
+}
